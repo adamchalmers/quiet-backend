@@ -12,14 +12,14 @@ pub mod userfacing;
 
 /// Shared app state which can be read by any handler.
 #[derive(Clone, Debug)]
-pub struct State<DS: datastore::PostStore> {
+pub struct State<DS: datastore::Client> {
     pub ds: Arc<DS>,
 }
 
 /// Just a named pair that can be extracted from the path of many endpoints.
 #[derive(Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
 pub struct AccountPost {
-    pub account_id: Uuid,
+    pub user_id: Uuid,
     pub post_id: Uuid,
 }
 

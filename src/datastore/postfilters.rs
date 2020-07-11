@@ -12,5 +12,12 @@ pub struct PostFilters {
     pub text_contains: Option<String>,
     pub existed_at: Option<DateTime<Utc>>,
     pub id: Option<Uuid>,
-    pub account_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
+    /// Maximum number of posts to let match the filter
+    #[serde(default = "default_limit")]
+    pub limit: u8,
+}
+
+fn default_limit() -> u8 {
+    100
 }

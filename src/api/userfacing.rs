@@ -2,7 +2,7 @@
 //! which redacts some business-sensitive fields.
 use crate::api::{observe, AccountPost, CoerceColl, State};
 use crate::datastore;
-use crate::datastore::{Content, Post};
+use crate::datastore::structs::{Content, NewPost, Post};
 use crate::twoface::Fallible;
 use actix_web::web;
 
@@ -10,9 +10,9 @@ use chrono::{offset::Utc, DateTime};
 use serde::{self, Deserialize, Serialize};
 use uuid::Uuid;
 
-pub fn configure<DS: datastore::PostStore + 'static>(cfg: &mut web::ServiceConfig) {
+pub fn configure<DS: datastore::Client + 'static>(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/{account_id}/posts")
+        web::scope("/{user_id}/posts")
             .route("", web::post().to(write_post::<DS>))
             .route("", web::get().to(list_posts::<DS>))
             .route("/{post_id}", web::get().to(get_post::<DS>))
@@ -50,14 +50,14 @@ pub struct WritePostBody {
 }
 
 // Insert a post into the datastore
-async fn write_post<DS: datastore::PostStore>(
+async fn write_post<DS: datastore::Client>(
     state: web::Data<State<DS>>,
-    account_id: web::Path<Uuid>,
+    user_id: web::Path<Uuid>,
     body: web::Json<WritePostBody>,
 ) -> Fallible<web::Json<UserFacingPost>> {
     observe("post_post", || async {
-        let new_post = datastore::NewPost {
-            account_id: *account_id,
+        let new_post = NewPost {
+            user_id: *user_id,
             content: body.content,
             text: body.text.clone(),
         };
@@ -68,38 +68,38 @@ async fn write_post<DS: datastore::PostStore>(
 }
 
 // Get all user's posts from the datastore
-async fn list_posts<DS: datastore::PostStore>(
+async fn list_posts<DS: datastore::Client>(
     state: web::Data<State<DS>>,
-    account_id: web::Path<Uuid>,
+    user_id: web::Path<Uuid>,
     filters: web::Query<PostFilters>,
 ) -> Fallible<web::Json<Vec<UserFacingPost>>> {
     observe("list_post", || async {
-        let filters = filters.into_inner().into_datastore_filters(*account_id);
+        let filters = filters.into_inner().into_datastore_filters(*user_id);
         let posts_and_conns = state.ds.list_posts(filters).await?.coerce_into();
         Ok(web::Json(posts_and_conns))
     })
     .await
 }
 
-async fn get_post<DS: datastore::PostStore>(
+async fn get_post<DS: datastore::Client>(
     state: web::Data<State<DS>>,
     path: web::Path<AccountPost>,
 ) -> Fallible<web::Json<Option<UserFacingPost>>> {
     observe("get_post", || async {
-        let post = state.ds.find_post(path.account_id, path.post_id).await?;
+        let post = state.ds.find_post(path.user_id, path.post_id).await?;
         Ok(web::Json(post.map(UserFacingPost::from)))
     })
     .await
 }
 
-async fn delete_post<DS: datastore::PostStore>(
+async fn delete_post<DS: datastore::Client>(
     state: web::Data<State<DS>>,
     path: web::Path<AccountPost>,
 ) -> Fallible<web::Json<Option<UserFacingPost>>> {
     observe("delete_post", || async {
         let response = state
             .ds
-            .delete_post(path.account_id, path.post_id)
+            .delete_post(path.user_id, path.post_id)
             .await?
             .map(|t| UserFacingPost::from(t));
         Ok(web::Json(response))
@@ -123,6 +123,7 @@ pub struct PostFilters {
     pub existed_at: Option<DateTime<Utc>>,
     pub uuid: Option<Uuid>,
     pub text_contains: Option<String>,
+    pub limit: u8,
 }
 
 impl PostFilters {
@@ -132,34 +133,31 @@ impl PostFilters {
     // before the datastore can execute them.
     pub fn into_datastore_filters(
         self,
-        account_id: Uuid,
+        user_id: Uuid,
     ) -> crate::datastore::postfilters::PostFilters {
         crate::datastore::postfilters::PostFilters {
-            account_id: Some(account_id),
+            user_id: Some(user_id),
             is_deleted: self.is_deleted,
             existed_at: self.existed_at,
             text_contains: self.text_contains,
             id: self.uuid,
+            limit: self.limit,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str;
-    use std::sync::Arc;
-
+    use super::*;
+    use crate::api::{admin, parse_resp, userfacing};
+    use crate::datastore::mock;
     use actix_web::{dev::Service, test, web, App, Error};
     use chrono::offset::Utc;
     use chrono::NaiveDateTime;
     use serde_json::Value as JValue;
-
+    use std::str;
+    use std::sync::Arc;
     use userfacing::WritePostBody;
-
-    use crate::api::{admin, parse_resp, userfacing};
-    use crate::datastore::{mock, Post};
-
-    use super::*;
 
     #[test]
     fn test_ser() {
@@ -173,9 +171,10 @@ mod tests {
             )),
             uuid: Some(uuid),
             text_contains: Some("substring".to_owned()),
+            limit: 100,
         };
         assert_eq!(
-            "name=my-post&is_deleted=true&existed_at=1970-01-01T00%3A01%3A01Z&uuid=0000002a-000c-0005-0c03-0938362b0809&text_contains=substring",
+            "name=my-post&is_deleted=true&existed_at=1970-01-01T00%3A01%3A01Z&uuid=0000002a-000c-0005-0c03-0938362b0809&text_contains=substring&limit=100",
             serde_qs::to_string(&obj).unwrap()
         );
     }
@@ -210,20 +209,20 @@ mod tests {
     #[actix_rt::test]
     async fn test_new_post_can_be_viewed() -> Result<(), Error> {
         // Set up a test app
-        let store = Arc::new(mock::PostStore::default());
+        let store = Arc::new(mock::Client::default());
         let mut app = test::init_service(
             App::new()
                 .data(State { ds: store.clone() })
-                .service(web::scope("/accounts").configure(configure::<mock::PostStore>))
-                .service(web::scope("/admin").configure(admin::configure::<mock::PostStore>)),
+                .service(web::scope("/accounts").configure(configure::<mock::Client>))
+                .service(web::scope("/admin").configure(admin::configure::<mock::Client>)),
         )
         .await;
 
         // Send a POST to create a new post
         let text = "something".to_owned();
-        let account_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
         let create_post_req = test::TestRequest::post()
-            .uri(&format!("/accounts/{}/posts", account_id))
+            .uri(&format!("/accounts/{}/posts", user_id))
             .header("Authorization", "Bearer testbase64value")
             .set_json(&userfacing::WritePostBody {
                 content: Content::None,
@@ -238,7 +237,7 @@ mod tests {
         assert_eq!(created_post.text, text);
 
         // get newly created post via user facing API
-        let uri = format!("/accounts/{}/posts/{}", account_id, created_post.id);
+        let uri = format!("/accounts/{}/posts/{}", user_id, created_post.id);
         let get_req = test::TestRequest::get()
             .uri(&uri)
             .header("Authorization", "Bearer testbase64value")
@@ -260,7 +259,7 @@ mod tests {
         assert_eq!(response[0].text, text);
 
         // get non-existent post
-        let uri = &format!("/accounts/{}/posts/99", account_id);
+        let uri = &format!("/accounts/{}/posts/99", user_id);
         let get_req = test::TestRequest::get()
             .uri(&uri)
             .header("Authorization", "Bearer testbase64value")
@@ -277,9 +276,9 @@ mod tests {
         let mut app = test::init_service(
             App::new()
                 .data(State {
-                    ds: Arc::new(mock::PostStore::default()),
+                    ds: Arc::new(mock::Client::default()),
                 })
-                .service(web::scope("/accounts").configure(configure::<mock::PostStore>)),
+                .service(web::scope("/accounts").configure(configure::<mock::Client>)),
         )
         .await;
 
@@ -353,27 +352,27 @@ mod tests {
     async fn test_deleting_post() -> Result<(), Error> {
         // Set up a test app with a single post already in its datastore
         let post_id = Uuid::from_fields(42, 12, 5, &[12, 3, 9, 56, 54, 43, 8, 9]).unwrap();
-        let account_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
         let input_post = Post {
             id: post_id,
-            account_id,
+            user_id,
             created_at: Utc::now(),
             deleted_at: None,
             content: Content::None,
             text: "example".to_owned(),
         };
-        let mut ds = mock::PostStore::default();
+        let mut ds = mock::Client::default();
         ds.set_posts(vec![input_post.clone()]);
 
         let mut app = test::init_service(
             App::new()
                 .data(State { ds: Arc::new(ds) })
-                .service(web::scope("/accounts").configure(configure::<mock::PostStore>)),
+                .service(web::scope("/accounts").configure(configure::<mock::Client>)),
         )
         .await;
 
         // Get that single post
-        let uri = format!("/accounts/{}/posts/{}", account_id, post_id);
+        let uri = format!("/accounts/{}/posts/{}", user_id, post_id);
         let get_req = test::TestRequest::get()
             .uri(&uri)
             .header("Authorization", "Bearer testbase64value")
@@ -393,7 +392,7 @@ mod tests {
         assert!(output_post.is_deleted());
 
         // Get all non-deleted posts. Should return an empty list.
-        let uri = format!("/accounts/{}/posts?is_deleted=false", account_id);
+        let uri = format!("/accounts/{}/posts?is_deleted=false", user_id);
         let get_non_deleted_req = test::TestRequest::get()
             .uri(&uri)
             .header("Authorization", "Bearer testbase64value")
@@ -403,8 +402,8 @@ mod tests {
         assert_eq!(output_posts, JValue::Array(Vec::new()));
 
         // delete non existing post, expect 404
-        let different_account_id = Uuid::new_v4();
-        let uri = format!("/accounts/{}/posts/99", different_account_id);
+        let different_user_id = Uuid::new_v4();
+        let uri = format!("/accounts/{}/posts/99", different_user_id);
         let delete_req = test::TestRequest::delete()
             .uri(&uri)
             .header("Authorization", "Bearer testbase64value")

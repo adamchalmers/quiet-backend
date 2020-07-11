@@ -1,5 +1,5 @@
 mod errors;
-pub mod post_store;
+pub mod postgres_client;
 use crate::config::Config;
 use diesel::{
     pg::PgConnection,
@@ -30,7 +30,7 @@ impl From<Dsn> for String {
     }
 }
 
-/// An implementation of datastore::PostStore backed by Postgres
+/// An implementation of datastore::Client backed by Postgres
 #[derive(Clone)]
 pub struct PostgresStore {
     pool: Pool<ConnectionManager<PgConnection>>,
