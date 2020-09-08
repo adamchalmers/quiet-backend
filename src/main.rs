@@ -21,12 +21,17 @@ use datastore::postgres;
 use futures::future::FutureExt;
 use std::sync::Arc;
 use std::time::Duration;
-use structopt::StructOpt;
 use tracing::{info, warn, Level};
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
-    let config = Config::from_iter(std::env::args());
+    let args: Vec<_> = std::env::args().collect();
+    guard!(let [_, config_file_path, ..] = &args[..] else {
+        eprintln!("First argument should be path to config file");
+        return
+    });
+
+    let config= Config::from_file(config_file_path);
 
     // Set up logger output
     let subscriber_builder = tracing_subscriber::fmt().with_max_level(Level::DEBUG);
