@@ -31,7 +31,7 @@ fn main() {
         return
     });
 
-    let config= Config::from_file(config_file_path);
+    let config = Config::from_file(config_file_path);
 
     // Set up logger output
     let subscriber_builder = tracing_subscriber::fmt().with_max_level(Level::DEBUG);
@@ -60,7 +60,7 @@ fn main() {
     if disable_auth {
         warn!("Auth is disabled. This should only happen in testing.");
     }
-    let state = api::State {
+    let state = api::Database {
         ds: Arc::clone(&db_pointer),
     };
 
@@ -79,8 +79,8 @@ fn main() {
             .wrap(middleware::Logger::default())
             // limit size of the payload (global configuration)
             .data(web::JsonConfig::default().limit(max_body_size))
-            .service(web::scope("/accounts").configure(api::userfacing::configure::<PostgresStore>))
-            .service(web::scope("/admin").configure(api::admin::configure::<PostgresStore>))
+            .service(web::scope("/accounts").configure(api::userfacing::configure))
+            .service(web::scope("/admin").configure(api::admin::configure))
     })
     .bind(config.userfacing_listen_address.clone())
     .expect("couldn't start userfacing HTTP server")

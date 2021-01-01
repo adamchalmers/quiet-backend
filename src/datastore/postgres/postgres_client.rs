@@ -6,11 +6,9 @@ use crate::datastore::{
     },
     structs::{NewPost, Post, User},
     tables::{follows, posts, users},
-    Client,
 };
 use crate::twoface::{Fallible, TfError};
 use actix_web::web::block;
-use async_trait::async_trait;
 use diesel::{
     dsl::now,
     expression::BoxableExpression,
@@ -23,9 +21,8 @@ use diesel::{
 };
 use uuid::Uuid;
 
-#[async_trait]
-impl Client for PostgresStore {
-    async fn new_post(&self, new_post: NewPost) -> Fallible<Post> {
+impl PostgresStore {
+    pub async fn new_post(&self, new_post: NewPost) -> Fallible<Post> {
         let conn = self.pool.get()?;
         let post = block(move || {
             conn.transaction::<_, TfError, _>(|| {
@@ -42,7 +39,7 @@ impl Client for PostgresStore {
         Ok(post)
     }
 
-    async fn list_posts(&self, filters: PostFilters) -> Fallible<Vec<Post>> {
+    pub async fn list_posts(&self, filters: PostFilters) -> Fallible<Vec<Post>> {
         let conn = self.pool.get()?;
         let query_result: DbPoolResult<_> = block(move || {
             // Get posts
@@ -62,7 +59,7 @@ impl Client for PostgresStore {
         Ok(query_result.to_resp()?)
     }
 
-    async fn find_post(&self, user_id: Uuid, id: Uuid) -> Fallible<Option<Post>> {
+    pub async fn find_post(&self, user_id: Uuid, id: Uuid) -> Fallible<Option<Post>> {
         let conn = self.pool.get()?;
         let query_result: DbPoolResult<_> = block(move || {
             let target_post: Option<Post> = posts::table
@@ -81,7 +78,7 @@ impl Client for PostgresStore {
         Ok(query_result.to_resp()?)
     }
 
-    async fn delete_post(&self, user_id: Uuid, id: Uuid) -> Fallible<Option<Post>> {
+    pub async fn delete_post(&self, user_id: Uuid, id: Uuid) -> Fallible<Option<Post>> {
         let conn = self.pool.get()?;
         let post = block(move || {
             conn.transaction::<_, anyhow::Error, _>(|| {
@@ -101,7 +98,7 @@ impl Client for PostgresStore {
         Ok(post)
     }
 
-    async fn timeline(&self, user_id: Uuid, num_posts: u8) -> Fallible<Vec<Post>> {
+    pub async fn _timeline(&self, user_id: Uuid, num_posts: u8) -> Fallible<Vec<Post>> {
         let conn = self.pool.get()?;
         let query_result: DbPoolResult<_> = block(move || {
             let users_they_follow: Vec<User> = follows::table
@@ -119,7 +116,7 @@ impl Client for PostgresStore {
         Ok(query_result.to_resp()?)
     }
 
-    async fn get_user(&self, user_id: Uuid) -> Fallible<Option<User>> {
+    pub async fn _get_user(&self, user_id: Uuid) -> Fallible<Option<User>> {
         let conn = self.pool.get()?;
         let query_result: DbPoolResult<_> = block(move || {
             let user: Option<User> = users::table.find(user_id).get_result(&conn).optional()?;

@@ -7,12 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix = "0.9"
-actix-http = "1"
+actix = "0.10"
+actix-http = {version = "2.1.0", features = ["actors"] }
 actix-rt = "1.1.1"
-actix-service = "1.0"
-actix-web = { version="2.0.0", features=["openssl"] }
-actix-web-httpauth = "0.4.1"
+actix-service = "1.0.6"
+actix-web = { version="3.3.2", features = ["openssl"] }
+actix-web-httpauth = "0.5"
 anyhow = "1.0"
 async-trait = "0.1"
 awc = "1.0.1"

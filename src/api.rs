@@ -1,4 +1,4 @@
-use crate::datastore;
+use crate::datastore::postgres::PostgresStore;
 use crate::metrics;
 use crate::twoface::Fallible;
 use serde::{Deserialize, Serialize};
@@ -10,10 +10,9 @@ use uuid::Uuid;
 pub mod admin;
 pub mod userfacing;
 
-/// Shared app state which can be read by any handler.
-#[derive(Clone, Debug)]
-pub struct State<DS: datastore::Client> {
-    pub ds: Arc<DS>,
+#[derive(Clone)]
+pub struct Database {
+    pub ds: Arc<PostgresStore>,
 }
 
 /// Just a named pair that can be extracted from the path of many endpoints.
@@ -34,35 +33,6 @@ impl<T> CoerceColl<T> for Vec<T> {
     fn coerce_into<U: From<T>>(self) -> Vec<U> {
         self.into_iter().map(|v| v.into()).collect()
     }
-}
-
-#[cfg(test)]
-/// Parses the response into HTTP 200 containing JSON of type T. Panics otherwise.
-fn parse_resp_bytes(resp: &actix_web::dev::ServiceResponse) -> &bytes::Bytes {
-    let ok = resp.status() == actix_web::http::StatusCode::OK;
-
-    if !ok {
-        if let Some(actix_web::body::Body::Bytes(bytes)) = resp.response().body().as_ref() {
-            if let Ok(body) = String::from_utf8(bytes.to_vec()) {
-                panic!("Response status {}, body {}", resp.status(), body)
-            }
-        }
-        panic!("HTTP Error status {}", resp.status())
-    }
-
-    match resp.response().body().as_ref() {
-        Some(actix_web::body::Body::Bytes(bytes)) => bytes,
-        _ => panic!("Response error"),
-    }
-}
-
-#[cfg(test)]
-/// Parses the response into whatever T the programmer wants, or panics.
-fn parse_resp<'a, T: serde::Deserialize<'a>>(resp: &'a actix_web::dev::ServiceResponse) -> T {
-    let response_body = parse_resp_bytes(resp);
-    let parsed_resp: T =
-        serde_json::from_slice(&response_body).expect("response was the wrong type");
-    parsed_resp
 }
 
 /// Execute the closure, then log its operational metrics, e.g. time taken, whether it returned Ok/Err, etc.
